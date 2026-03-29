@@ -34,7 +34,7 @@ import {
   serverTimestamp,
 } from './firebase';
 import { sanitizeInput, isValidEmail, sanitizeURL, createRateLimiter } from './sanitize';
-import { Analytics } from "@vercel/analytics/react";
+
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
 const AUTO_PASSPHRASE_SUFFIX = 'a1u2t0m3a4t5e6d7c8h9a0t';
@@ -801,7 +801,7 @@ function App() {
           onMenuClick={() => setSidebarOpen(true)}
         />
       </div>
-      <Analytics />
+
     </>
   );
 }
