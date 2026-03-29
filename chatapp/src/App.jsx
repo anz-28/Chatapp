@@ -11,6 +11,7 @@ import {
   IoClose,
   IoSearch,
   IoTrashOutline,
+  IoWarning,
 } from 'react-icons/io5';
 import { FcGoogle } from 'react-icons/fc';
 import {
@@ -32,10 +33,14 @@ import {
   onValue,
   serverTimestamp,
 } from './firebase';
+import { sanitizeInput, isValidEmail, sanitizeURL, createRateLimiter } from './sanitize';
 
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
 const AUTO_PASSPHRASE_SUFFIX = 'a1u2t0m3a4t5e6d7c8h9a0t';
+
+// Rate limiter: max 20 messages per 30 seconds
+const messageRateLimiter = createRateLimiter(20, 30000);
 
 async function deriveEncryptionKey(passphrase) {
   const salt = encoder.encode('chatapp-salt');
@@ -179,6 +184,11 @@ function AddContactModal({ user, onClose, onContactAdded }) {
     e.preventDefault();
     const trimmedEmail = email.trim().toLowerCase();
     if (!trimmedEmail) return;
+
+    if (!isValidEmail(trimmedEmail)) {
+      setError('Please enter a valid email address.');
+      return;
+    }
 
     // Don't allow adding yourself
     if (trimmedEmail === user.email?.toLowerCase()) {
@@ -489,9 +499,10 @@ function ChatPanel({ user, selectedUser, messages, message, setMessage, sendMess
             type="text"
             placeholder="Type a message..."
             value={message}
-            onChange={(e) => setMessage(e.target.value)}
+            onChange={(e) => setMessage(e.target.value.slice(0, 2000))}
             disabled={!user}
             autoFocus
+            maxLength={2000}
           />
           <button
             className="send-btn"
@@ -521,6 +532,7 @@ function App() {
   const [encryptedMode, setEncryptedMode] = useState(true);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [showAddContact, setShowAddContact] = useState(false);
+  const [rateLimitWarning, setRateLimitWarning] = useState('');
 
   const usersRef = useMemo(() => ref(database, 'users'), []);
 
@@ -556,6 +568,8 @@ function App() {
     const offUsers = onValue(usersRef, (snapshot) => {
       const usersMap = snapshot.val() || {};
       setUsers(Object.values(usersMap));
+    }, (error) => {
+      console.error('Users listener error:', error);
     });
 
     return () => {
@@ -575,6 +589,8 @@ function App() {
     const offContacts = onValue(contactsRef, (snapshot) => {
       const contactsMap = snapshot.val() || {};
       setContacts(Object.values(contactsMap));
+    }, (error) => {
+      console.error('Contacts listener error:', error);
     });
 
     return () => offContacts();
@@ -653,10 +669,19 @@ function App() {
   const sendMessage = async (e) => {
     e.preventDefault();
     if (!user || !selectedUser) return;
-    const text = message.trim();
+    const text = sanitizeInput(message);
     if (!text) return;
 
     if (encryptedMode && !encryptionKey) return;
+
+    // Rate limiting
+    const rateCheck = messageRateLimiter.check();
+    if (!rateCheck.allowed) {
+      const waitSec = Math.ceil(rateCheck.retryAfterMs / 1000);
+      setRateLimitWarning(`Too many messages. Wait ${waitSec}s.`);
+      setTimeout(() => setRateLimitWarning(''), 3000);
+      return;
+    }
 
     setSaving(true);
     try {
@@ -667,13 +692,14 @@ function App() {
         from: user.uid,
         to: selectedUser.uid,
         username: user.displayName || user.email || 'Anonymous',
-        photoURL: user.photoURL || '',
+        photoURL: sanitizeURL(user.photoURL) || '',
         text: payload,
         encrypted: encryptedMode,
         createdAt: Date.now(),
         ts: serverTimestamp(),
       });
       setMessage('');
+      setRateLimitWarning('');
     } catch (error) {
       console.error(error);
     } finally {
@@ -740,6 +766,14 @@ function App() {
           onClose={() => setShowAddContact(false)}
           onContactAdded={() => {}}
         />
+      )}
+
+      {/* Rate Limit Warning */}
+      {rateLimitWarning && (
+        <div className="rate-limit-toast animate-fade-in" style={{ position: 'fixed', bottom: 80, right: 28, zIndex: 200 }}>
+          <IoWarning size={14} />
+          {rateLimitWarning}
+        </div>
       )}
 
       <div className="chat-layout">

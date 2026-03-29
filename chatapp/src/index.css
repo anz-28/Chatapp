@@ -988,6 +988,21 @@ body {
   margin-top: 4px;
 }
 
+/* ──── Rate Limit Toast ──── */
+.rate-limit-toast {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 18px;
+  margin: 0 28px;
+  border-radius: 10px;
+  background: rgba(248, 113, 113, 0.1);
+  border: 1px solid rgba(248, 113, 113, 0.2);
+  color: var(--danger);
+  font-size: 0.8rem;
+  font-weight: 500;
+}
+
 /* ──── Mobile Responsive ──── */
 @media (max-width: 768px) {
   .sidebar {
