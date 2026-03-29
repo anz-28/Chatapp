@@ -11,8 +11,12 @@ import {
   ref,
   push,
   set,
+  get,
+  remove,
   query,
   limitToLast,
+  orderByChild,
+  equalTo,
   onValue,
   serverTimestamp,
 } from 'firebase/database';
@@ -33,4 +37,22 @@ const auth = getAuth(app);
 const provider = new GoogleAuthProvider();
 const database = getDatabase(app);
 
-export { auth, provider, signInWithPopup, signOut, onAuthStateChanged, database, ref, push, set, query, limitToLast, onValue, serverTimestamp };
+export {
+  auth,
+  provider,
+  signInWithPopup,
+  signOut,
+  onAuthStateChanged,
+  database,
+  ref,
+  push,
+  set,
+  get,
+  remove,
+  query,
+  limitToLast,
+  orderByChild,
+  equalTo,
+  onValue,
+  serverTimestamp,
+};

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, useRef } from 'react';
+import { useEffect, useMemo, useState, useRef, useCallback } from 'react';
 import {
   IoSend,
   IoLockClosed,
@@ -7,6 +7,10 @@ import {
   IoMenu,
   IoLogOutOutline,
   IoFlash,
+  IoPersonAdd,
+  IoClose,
+  IoSearch,
+  IoTrashOutline,
 } from 'react-icons/io5';
 import { FcGoogle } from 'react-icons/fc';
 import {
@@ -19,8 +23,12 @@ import {
   ref,
   push,
   set,
+  get,
+  remove,
   query,
   limitToLast,
+  orderByChild,
+  equalTo,
   onValue,
   serverTimestamp,
 } from './firebase';
@@ -155,8 +163,157 @@ function LoginScreen({ onLogin }) {
 }
 
 
+/* ──────── Add Contact Modal ──────── */
+function AddContactModal({ user, onClose, onContactAdded }) {
+  const [email, setEmail] = useState('');
+  const [searching, setSearching] = useState(false);
+  const [error, setError] = useState('');
+  const [success, setSuccess] = useState('');
+  const inputRef = useRef(null);
+
+  useEffect(() => {
+    inputRef.current?.focus();
+  }, []);
+
+  const handleAddContact = async (e) => {
+    e.preventDefault();
+    const trimmedEmail = email.trim().toLowerCase();
+    if (!trimmedEmail) return;
+
+    // Don't allow adding yourself
+    if (trimmedEmail === user.email?.toLowerCase()) {
+      setError("You can't add yourself as a contact.");
+      return;
+    }
+
+    setSearching(true);
+    setError('');
+    setSuccess('');
+
+    try {
+      // Search for user by email in the users node
+      const usersRef = ref(database, 'users');
+      const q = query(usersRef, orderByChild('email'), equalTo(trimmedEmail));
+      const snapshot = await get(q);
+
+      if (!snapshot.exists()) {
+        setError('No user found with that email. They need to sign in at least once first.');
+        setSearching(false);
+        return;
+      }
+
+      // Get the found user's data
+      const foundUsers = snapshot.val();
+      const foundUid = Object.keys(foundUsers)[0];
+      const foundUser = foundUsers[foundUid];
+
+      // Check if already a contact
+      const contactRef = ref(database, `contacts/${user.uid}/${foundUid}`);
+      const existingContact = await get(contactRef);
+
+      if (existingContact.exists()) {
+        setError('This person is already in your contacts.');
+        setSearching(false);
+        return;
+      }
+
+      // Add contact to both sides (mutual)
+      await set(ref(database, `contacts/${user.uid}/${foundUid}`), {
+        uid: foundUid,
+        email: foundUser.email,
+        displayName: foundUser.displayName || '',
+        photoURL: foundUser.photoURL || '',
+        addedAt: Date.now(),
+      });
+
+      await set(ref(database, `contacts/${foundUid}/${user.uid}`), {
+        uid: user.uid,
+        email: user.email,
+        displayName: user.displayName || '',
+        photoURL: user.photoURL || '',
+        addedAt: Date.now(),
+      });
+
+      setSuccess(`${foundUser.displayName || foundUser.email} has been added!`);
+      setEmail('');
+      onContactAdded?.();
+
+      // Auto-close after a short delay
+      setTimeout(() => onClose(), 1500);
+    } catch (err) {
+      console.error('Error adding contact:', err);
+      setError('Something went wrong. Please try again.');
+    } finally {
+      setSearching(false);
+    }
+  };
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal-card animate-fade-in" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-header">
+          <h2>Add Contact</h2>
+          <button className="modal-close-btn" onClick={onClose}>
+            <IoClose size={20} />
+          </button>
+        </div>
+
+        <p className="modal-description">
+          Enter the email address of the person you want to chat with. They must have signed in at least once.
+        </p>
+
+        <form className="modal-form" onSubmit={handleAddContact}>
+          <div className="modal-input-wrapper">
+            <IoSearch size={16} className="modal-input-icon" />
+            <input
+              ref={inputRef}
+              type="email"
+              placeholder="Enter email address..."
+              value={email}
+              onChange={(e) => {
+                setEmail(e.target.value);
+                setError('');
+                setSuccess('');
+              }}
+              disabled={searching}
+            />
+          </div>
+
+          {error && (
+            <div className="modal-feedback error animate-fade-in">
+              {error}
+            </div>
+          )}
+
+          {success && (
+            <div className="modal-feedback success animate-fade-in">
+              {success}
+            </div>
+          )}
+
+          <button
+            className="btn-primary modal-submit-btn"
+            type="submit"
+            disabled={searching || !email.trim()}
+          >
+            {searching ? (
+              <span className="btn-loading">Searching...</span>
+            ) : (
+              <>
+                <IoPersonAdd size={16} />
+                Add Contact
+              </>
+            )}
+          </button>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+
 /* ──────── Sidebar Component ──────── */
-function Sidebar({ user, partnerList, selectedUser, setSelectedUser, encryptionKey, onLogout, isOpen, onClose }) {
+function Sidebar({ user, partnerList, selectedUser, setSelectedUser, encryptionKey, onLogout, isOpen, onClose, onAddContact, onRemoveContact }) {
   return (
     <div className={`sidebar ${isOpen ? 'open' : ''}`}>
       {/* Brand */}
@@ -183,12 +340,26 @@ function Sidebar({ user, partnerList, selectedUser, setSelectedUser, encryptionK
         </div>
       </div>
 
+      {/* Section title + Add button */}
+      <div className="sidebar-section-header">
+        <span className="sidebar-section-title">Contacts</span>
+        <button className="add-contact-btn" onClick={onAddContact} title="Add a contact">
+          <IoPersonAdd size={14} />
+        </button>
+      </div>
+
       {/* Users list */}
-      <div className="sidebar-section-title">Direct Messages</div>
       <div className="sidebar-users">
         {partnerList.length === 0 ? (
           <div className="no-users">
-            <p>No other users online yet.<br />Share the link to invite friends!</p>
+            <div className="no-users-icon">
+              <IoPersonAdd size={24} />
+            </div>
+            <p>No contacts yet.<br />Add someone by their email to start chatting!</p>
+            <button className="btn-ghost add-first-btn" onClick={onAddContact}>
+              <IoPersonAdd size={14} />
+              Add your first contact
+            </button>
           </div>
         ) : (
           partnerList.map((u) => (
@@ -204,6 +375,16 @@ function Sidebar({ user, partnerList, selectedUser, setSelectedUser, encryptionK
                 <div className="user-name">{u.displayName || u.email}</div>
                 <div className="user-status-text">Click to chat</div>
               </div>
+              <button
+                className="remove-contact-btn"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onRemoveContact(u);
+                }}
+                title="Remove contact"
+              >
+                <IoTrashOutline size={14} />
+              </button>
             </div>
           ))
         )}
@@ -241,7 +422,7 @@ function ChatPanel({ user, selectedUser, messages, message, setMessage, sendMess
             <ChatIcon />
           </div>
           <h3>Start a Conversation</h3>
-          <p>Select a user from the sidebar to begin a private, end-to-end encrypted conversation.</p>
+          <p>Select a contact from the sidebar to begin a private, end-to-end encrypted conversation.</p>
         </div>
       </div>
     );
@@ -331,6 +512,7 @@ function ChatPanel({ user, selectedUser, messages, message, setMessage, sendMess
 function App() {
   const [user, setUser] = useState(null);
   const [users, setUsers] = useState([]);
+  const [contacts, setContacts] = useState([]);
   const [selectedUser, setSelectedUser] = useState(null);
   const [message, setMessage] = useState('');
   const [messages, setMessages] = useState([]);
@@ -338,6 +520,7 @@ function App() {
   const [encryptionKey, setEncryptionKey] = useState(null);
   const [encryptedMode, setEncryptedMode] = useState(true);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [showAddContact, setShowAddContact] = useState(false);
 
   const usersRef = useMemo(() => ref(database, 'users'), []);
 
@@ -351,6 +534,7 @@ function App() {
     return ref(database, `chats/${activeChatId}`);
   }, [activeChatId]);
 
+  // Auth + users listener
   useEffect(() => {
     const unsubscribeAuth = onAuthStateChanged(auth, async (currentUser) => {
       setUser(currentUser);
@@ -365,6 +549,7 @@ function App() {
       } else {
         setEncryptionKey(null);
         setEncryptedMode(false);
+        setContacts([]);
       }
     });
 
@@ -379,6 +564,23 @@ function App() {
     };
   }, [usersRef]);
 
+  // Contacts listener - listen for changes to current user's contacts
+  useEffect(() => {
+    if (!user) {
+      setContacts([]);
+      return;
+    }
+
+    const contactsRef = ref(database, `contacts/${user.uid}`);
+    const offContacts = onValue(contactsRef, (snapshot) => {
+      const contactsMap = snapshot.val() || {};
+      setContacts(Object.values(contactsMap));
+    });
+
+    return () => offContacts();
+  }, [user]);
+
+  // Derive encryption key per chat
   useEffect(() => {
     if (!activeChatId) {
       setEncryptionKey(null);
@@ -402,6 +604,7 @@ function App() {
     derive();
   }, [activeChatId]);
 
+  // Messages listener
   useEffect(() => {
     if (!activeChatRef) {
       setMessages([]);
@@ -478,7 +681,42 @@ function App() {
     }
   };
 
-  const partnerList = users.filter((u) => user && u.uid !== user.uid);
+  const handleRemoveContact = useCallback(async (contactUser) => {
+    if (!user || !contactUser) return;
+    const confirmed = window.confirm(`Remove ${contactUser.displayName || contactUser.email} from your contacts?`);
+    if (!confirmed) return;
+
+    try {
+      // Remove from both sides
+      await remove(ref(database, `contacts/${user.uid}/${contactUser.uid}`));
+      await remove(ref(database, `contacts/${contactUser.uid}/${user.uid}`));
+
+      // If the removed contact was selected, deselect them
+      if (selectedUser?.uid === contactUser.uid) {
+        setSelectedUser(null);
+      }
+    } catch (err) {
+      console.error('Error removing contact:', err);
+    }
+  }, [user, selectedUser]);
+
+  // Build the partner list from contacts - match contact UIDs against the full users list
+  // to get the latest user data (name, photo, etc.)
+  const partnerList = useMemo(() => {
+    if (!user) return [];
+    const contactUids = new Set(contacts.map(c => c.uid));
+    return users
+      .filter(u => contactUids.has(u.uid) && u.uid !== user.uid)
+      .map(u => ({
+        ...u,
+        // Merge contact-specific data if needed
+        ...contacts.find(c => c.uid === u.uid),
+        // But always prefer the latest user data
+        displayName: u.displayName,
+        email: u.email,
+        photoURL: u.photoURL,
+      }));
+  }, [user, users, contacts]);
 
   // If not logged in, show login screen
   if (!user) {
@@ -495,6 +733,15 @@ function App() {
         />
       )}
 
+      {/* Add Contact Modal */}
+      {showAddContact && (
+        <AddContactModal
+          user={user}
+          onClose={() => setShowAddContact(false)}
+          onContactAdded={() => {}}
+        />
+      )}
+
       <div className="chat-layout">
         <Sidebar
           user={user}
@@ -505,6 +752,8 @@ function App() {
           onLogout={logout}
           isOpen={sidebarOpen}
           onClose={() => setSidebarOpen(false)}
+          onAddContact={() => setShowAddContact(true)}
+          onRemoveContact={handleRemoveContact}
         />
         <ChatPanel
           user={user}
